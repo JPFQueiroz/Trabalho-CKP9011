@@ -1,0 +1,128 @@
+---
+title: "Machine learning no estudo da dinâmica conformacional de proteinas"
+author:
+- MSc. João Pedro Fernandes Queiroz^[Universidade Federal do Ceará, pedroqueiroz@alu.ufc.br]
+- Orientador Prof. Dr. Bruno Anderson Matias da Rocha^[Universidade Federal do Ceará,
+  brunoanderson@gmail.com]
+- Colaborador Prof. Dr. José Maria da Silva Monteiro Filho^[Universidade Federal do
+  Ceará, monteiro@lia.ufc.br]
+output:
+  html_document:
+    df_print: paged
+bibliography: Bibliography.bib
+csl: abnt.csl
+lang: pt-BR
+editor_options:
+  chunk_output_type: inline
+---
+
+# Introdução
+
+Proteínas estão entre as macromoléculas mais estudadas no campo da Bioquímica por desempenharem diversos processos essenciais para a vida na Terra. Um dos princípios mais importantes da bioquímica diz respeito à relação entre a estrutura molecular e a função de uma proteína. No entanto, proteínas não são moléculas estáticas. Elas se movimentam; mudam a própria conformação ao longo do tempo. Portanto, para entendermos satisfatoriamente como a estrutura de uma proteína determina a sua função, precisamos conhecer os meandros conformacionais pelos quais a estrutura de uma proteína navega durante um intervalo de tempo.  
+
+Extrair informação sobre os padrões conformacionais de um conjunto de dados de proteínas não é uma tarefa fácil. Cada proteína possui uma grande quantidade de resíduos de aminoácidos, que por sua vez possuem uma vasta gama de estados conformacionais. A análise de componente principal (PCA) é um algoritmo capaz de reduzir a dimensionalidade de um conjunto de dados ao mesmo tempo que retém a sua variabilidade [@Ringner2008]. O objetivo do presente projeto é aplicar a PCA no estudo da variação conformacional de famílias de proteínas. Identificando componentes principais ao longo dos quais a variação dos dados é máxima, buscamos avaliar as similaridades e diferenças entre famílias de proteínas. Utilizando algoritmos de *machine learning*, tentaremos agrupar as proteínas de forma a facilitar na identificação de diferenças conformacionais entre grupos, diferenças estas potencialmente importantes para explicar a variação na função proteica.  
+
+# Parte I: extração de dados
+
+O Protein Data Bank (PDB) (https://www.rcsb.org/) é a principal base de dados de estruturas de macromoléculas biológicas determinadas experimentalmente. Iremos baixar as estruturas de proteínas em formato PDB para quaisquer família de proteínas de interesse utilizando o algoritmo BLAST [@Altschul1990] através do pacote Bio3D (versão 2.4-3) [@Grant2006; @Grant2020; @Skjærven2014] para a linguagem R (versão 4.1.1) [@R]. O pacote Bio3D possui funções para manipulação de estruturas moleculares em formato PDB, incluindo alinhamento e sobreposição estrutural baseados em sequências executando o software MUSCLE [@Edgar2004] como aplicação externa para o alinhamento das sequências, ou baseado em estrutura executando o software MUSTANG [@Konagurthu2006] para a produção do alinhamento por meio do ajuste estrutural. A família de proteínas estruturalmente sobreposta será usada para a PCA a fim de obtermos os componentes principais que irão compor o *dataset* que iremos utilizar nas etapas seguintes do projeto.  
+
+O *ensemble* — "conjunto cujos elementos são sistemas de partículas que servem para descrever um único sistema dado" [Oxford Languages] — PCA é baseado na diagonalização da matriz de covariância, $C$, com elementos $C_{ij}$ calculados a partir das coordenadas cartesianas alinhadas e sobrepostas, $r$, dos átomos de C$\alpha$:
+
+$$
+C_{ij} = \langle(r_i-\langle r_j \rangle)\times(r_j- \langle r_j \rangle) \rangle
+$$
+
+onde i e j enumeram todas as 3 $N$ coordenadas cartesianas ($N$ é o número de átomos), e $\langle r \rangle$ denota a média do ensemble. Projetar a distribuição no subespaço definido pelos componentes principais com os maiores autovalores fornece uma representação das estruturas com reduzida dimensionalidade, facilitando a análise dos diferentes confôrmeros.  
+
+No presente trabalho iremos analisar a família de proteínas das lectinas de plantas leguminosas da subtribo Diocleinae.  
+
+## Lectinas de leguminosas
+
+O chunk de código abaixo inclui os principais pacotes a serem carregados.  
+
+```{r main_packages, echo=TRUE, message=FALSE, warning=FALSE}
+
+# Necessary packages
+library(bio3d)
+
+```
+
+Para realizarmos a sobreposição estrutural baseada no alinhamento de sequências, precisamos que o software MUSCLE esteja instalado e precisamos usar o path para o executável como argumento na função do Bio3D que irá submeter as sequências e os parâmetros do alinhamento ao MUSCLE.  
+
+```{r muscle_path, echo=TRUE, message=FALSE, warning=FALSE}
+
+# MUSCLE executable file path
+file.path("D:", "Biblioteca", "R scripts", "Multiple Sequence Alignment",
+"muscle3.8.31_i86win32.exe") -> fp.muscle
+
+```
+
+Para baixarmos as estruturas do PDB, iremos executar o algoritmo BLAST usando como isca a estrutura da ConA, uma das mais bem conhecidas e estudas lectinas de leguminosas.  
+
+```{r blast_legume_lectins, echo=TRUE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# Search for related structures 
+aa <- get.seq("2CNA")
+blast <- blast.pdb(aa)
+hits <- plot.blast(blast, cutoff = 303)
+# Download metadata for hits from PDB
+annotation <- pdb.annotate(hits)
+
+```
+
+Após verificar os hits, observamos que os 34 selecionados de acordo com o cutoff sugerido são estruturas de lectinas de leguminosas da subtribo Diocleinae, enquanto que os hits não selecionados correspondem a lectinas de leguminosas que não fazem parte da subtribo Diocleinae. Com isso, iremos realizar o download dos 34 hits.  
+
+```{r download_ConA_hits, echo=TRUE, message=FALSE, warning=FALSE, cache=TRUE}
+
+## Download and split by chain ID
+files <- get.pdb(hits, path = "Diocleinae_3D_structures", split = TRUE)
+
+```
+
+Agora iremos realizar o alinhamento de sequências e sobreposição estrutural para o monômero separado de cada lectina, salvando as estruturas com as novas coordenadas no final.  
+
+```{r structural_alignment, echo=TRUE, message=FALSE, warning=FALSE, cache=TRUE}
+
+# Structure/sequence alignment
+pdbs <- pdbaln(files, fit=TRUE, exefile = fp.muscle)
+# Core identification
+core <- core.find(pdbs)
+# Plot core
+col=rep("black", length(core$volume))
+col[core$volume<2]="pink"; col[core$volume<1]="red"
+plot(core, col=col)
+# Visualize core
+core.inds <- print(core, vol=1.0)
+# Write the core and the superimposed structures
+write.pdb(xyz=pdbs$xyz[1,core.inds$xyz], file="quick_core.pdb")
+xyz <- pdbfit(pdbs, core.inds, outpath = "core_ensemble")
+
+```
+
+O alinhamento mostra 215 sítios equivalentes e sem lacunas, ou seja, temos 215 átomos de C$\alpha$ equivalentes, onde iremos realizar a PCA e visualizar uma projeção preliminar dos três primeiros componentes principais.  
+
+```{r pca, echo=TRUE, message=FALSE, warning=FALSE}
+
+# PCA
+pc_lectins <- pca(pdbs)
+# Plot results
+plot(pc_lectins)
+# Eigenvalues
+L <- pc_lectins$L
+# Proportion of variance
+pvar_percent <- (L/sum(L)) * 100
+# Orthogonal eigenvectors
+PCs <- pc_lectins$z
+pclabels <- 1:length(PCs[1, ])
+for (i in 1:length(PCs[1, ])) {
+  pclabels[i] <- paste("PC", i, sep = "")
+}
+dataset <- as.data.frame(PCs)
+colnames(dataset) <- pclabels
+# Save the dataset as CSV
+write.csv(dataset, file = "dataset.csv", sep = ",", row.names = TRUE, 
+          col.names = TRUE)
+
+```
+
+# Referências
