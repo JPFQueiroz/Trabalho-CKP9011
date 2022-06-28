@@ -1,0 +1,1107 @@
+---
+title: "Machine learning no estudo da dinâmica conformacional de proteinas"
+author:
+- MSc. João Pedro Fernandes Queiroz^[Universidade Federal do Ceará, pedroqueiroz@alu.ufc.br]
+output:
+  html_document:
+    df_print: paged
+bibliography: Bibliography.bib
+csl: abnt.csl
+lang: pt-BR
+editor_options:
+  chunk_output_type: inline
+---
+
+# Introdução
+
+Proteínas estão entre as macromoléculas mais estudadas no campo da Bioquímica por desempenharem diversos processos essenciais para a vida na Terra. Um dos princípios mais importantes da bioquímica diz respeito à relação entre a estrutura molecular e a função de uma proteína. No entanto, proteínas não são moléculas estáticas. Elas se movimentam; mudam a própria conformação ao longo do tempo. Portanto, para entendermos satisfatoriamente como a estrutura de uma proteína determina a sua função, precisamos conhecer os meandros conformacionais pelos quais a estrutura de uma proteína navega durante um intervalo de tempo.  
+
+Extrair informação sobre os padrões conformacionais de um conjunto de dados de proteínas não é uma tarefa fácil. Cada proteína possui uma grande quantidade de resíduos de aminoácidos, que por sua vez possuem uma vasta gama de estados conformacionais. A análise de componente principal (PCA) é um algoritmo capaz de reduzir a dimensionalidade de um conjunto de dados ao mesmo tempo que retém a sua variabilidade [@Ringner2008]. PCA pode ser usada para reduzir o número de dimensões necessárias para modelar importantes eventos conformacionais em proteínas, tais como aqueles relacionados ao ajuste induzido pela ligação de ligantes [@Teodoro2003]. Além disso, algoritmos de *machine learning* não supervisionado podem ser usados para agrupamento das proteínas no espaço dos componentes principais [@Greener2022], permitindo identificar e predizer grupos que representem estados conformaionais potencialmente relevantes. O objetivo do presente projeto é aplicar a PCA no estudo da variação conformacional de famílias de proteínas. Identificando componentes principais ao longo dos quais a variação dos dados é máxima, buscamos avaliar as similaridades e diferenças entre famílias de proteínas. Utilizando algoritmos de *machine learning*, tentaremos agrupar as proteínas de forma a facilitar na identificação de diferenças conformacionais entre grupos, diferenças estas potencialmente importantes para explicar a variação na função proteica.  
+
+# Parte I: extração de dados
+
+O Protein Data Bank (PDB) (https://www.rcsb.org/) é a principal base de dados de estruturas de macromoléculas biológicas determinadas experimentalmente. Iremos baixar as estruturas de proteínas em formato PDB para quaisquer família de proteínas de interesse utilizando o algoritmo BLAST [@Altschul1990] através do pacote Bio3D (versão 2.4-3) [@Grant2006; @Grant2020; @Skjærven2014] para a linguagem R (versão 4.1.1) [@R]. O pacote Bio3D possui funções para manipulação de estruturas moleculares em formato PDB, incluindo alinhamento e sobreposição estrutural baseados em sequências executando o software MUSCLE [@Edgar2004] como aplicação externa para o alinhamento das sequências, ou baseado em estrutura executando o software MUSTANG [@Konagurthu2006] para a produção do alinhamento por meio do ajuste estrutural. A família de proteínas estruturalmente sobreposta será usada para a PCA a fim de obtermos os componentes principais que irão compor o *dataset* que iremos utilizar nas etapas seguintes do projeto.  
+
+O *ensemble* — "conjunto cujos elementos são sistemas de partículas que servem para descrever um único sistema dado" [Oxford Languages] — PCA é baseado na diagonalização da matriz de covariância, $C$, com elementos $C_{ij}$ calculados a partir das coordenadas cartesianas alinhadas e sobrepostas, $r$, dos átomos de C$\alpha$:
+
+$$
+C_{ij} = \langle(r_i-\langle r_j \rangle)\times(r_j- \langle r_j \rangle) \rangle
+$$
+
+onde i e j enumeram todas as 3 $N$ coordenadas cartesianas ($N$ é o número de átomos), e $\langle r \rangle$ denota a média do ensemble. Projetar a distribuição no subespaço definido pelos componentes principais com os maiores autovalores fornece uma representação das estruturas com reduzida dimensionalidade, facilitando a análise dos diferentes confôrmeros.  
+
+No presente trabalho iremos analisar a família de proteínas das lectinas de plantas leguminosas da subtribo Diocleinae.  
+
+## Lectinas de leguminosas
+
+```{r ConA_tetramer, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(NGLVieweR)
+NGLVieweR("5CNA") %>%
+addRepresentation("cartoon")
+```
+
+O chunk de código abaixo inclui os principais pacotes a serem carregados.  
+
+```{r main_packages, echo=TRUE, message=FALSE, warning=FALSE}
+
+# Necessary packages
+library(bio3d)
+
+```
+
+Para realizarmos a sobreposição estrutural baseada no alinhamento de sequências, precisamos que o software MUSCLE esteja instalado e precisamos usar o path para o executável como argumento na função do Bio3D que irá submeter as sequências e os parâmetros do alinhamento ao MUSCLE.  
+
+```{r muscle_path, echo=TRUE, message=FALSE, warning=FALSE}
+
+# MUSCLE executable file path
+file.path("D:", "Biblioteca", "R scripts", "Multiple Sequence Alignment",
+"muscle3.8.31_i86win32.exe") -> fp.muscle
+
+```
+
+Para baixarmos as estruturas do PDB, iremos executar o algoritmo BLAST usando como isca a estrutura da ConA, uma das mais bem conhecidas e estudas lectinas de leguminosas.  
+
+```{r blast_legume_lectins, echo=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+
+# Search for related structures 
+aa <- get.seq("2CNA")
+blast <- blast.pdb(aa)
+hits <- plot.blast(blast, cutoff = 303)
+# We noted that despite our cutoff recovered only lectins of the Diocleinae
+# subtribe with proper post-translational circular permutations, some Diocleinae
+# lectins are lacking. We will add below some of them.
+pdbids <- c("1JBC", "3CNA", "1AZD", "1BXH", "1C57", "1CES", "1CJP", "1CON", 
+            "1CVN", "1DQ0", "1DQ1", "1DQ2", "1DQ4", "1DQ5", "1DQ6", "1ENQ", 
+            "1ENR", "1ENS", "1GIC", "1GKB", "1HQW", "1I3H", "1JN2", "1JOJ",
+            "1JUI", "1JW6", "1JYC", "1JYI", "1NLS", "1NXD", "1ONA", "1QDC", 
+            "1QDO", "1QGL", "1QNY", "1SCR", "1SCS", "1TEI", "1VAL", "1VAM",
+            "1VLN", "1XQN", "2A7A", "2CTV", "2CY6", "2CYF", "2D3R", "2D7F",
+            "2EF6", "2ENR", "2G4I", "2P2K", "2P34", "2P37", "2UU8", "2YZ4", 
+            "3AX4", "3D4K", "3ENR", "3JU9", "3NWK", "3QLQ", "3RS6", "3SNM",
+            "4CZS", "4DPN", "4H55", "4I30", "4K1Z", "4K20", "4K21", "4MYE", 
+            "4P14", "4P9W", "4P9X", "4P9Y", "4PCR", "4PF5", "4TYS", "4TZD",
+            "5CNA", "5O6N", "5WEY", "5YGM", "5Z5L", "5Z5N", "5Z5P", "5Z5Y",
+            "5ZAC", "6AHG", "6GW9", "6H2M", "6VB8", "7MG1", "7MG2", "7MG3", 
+            "7MG4", "7MG5", "7MG6", "7MG7", "7MG8", "7MG9", "7MGA", "7MGB", 
+            "7MGC", "7MGD")
+for (i in 1:length(pdbids)) {
+  pdbids[i] <- paste(pdbids[i], "_A", sep = "")
+}
+pdbids <- c(hits$pdb.id, pdbids)
+
+```
+
+Após verificar os hits, observamos que os 34 selecionados de acordo com o cutoff sugerido são estruturas de lectinas de leguminosas da subtribo Diocleinae, enquanto que os hits não selecionados correspondem a lectinas de leguminosas que não fazem parte da subtribo Diocleinae. Porém, também notamos que o algoritmo falhou em identificar muitas estruturas de lectinas da subtribo Diocleinae que estão disponíveis no PDB. Uma possível explicação para isso seria a ausência de uma sequência para a estrutura no campo onde o algoritmo do Bio3D realiza a busca através do BLAST. Dessa forma, examinamos o PDB e adicionamos manualmente todas as outras lectinas de leguminosas que o algoritmo falhou em encontrar.  
+
+```{r download_ConA_hits, echo=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+
+## Download and split by chain ID
+files <- get.pdb(pdbids, path = "Diocleinae_3D_structures", split = TRUE)
+# We need to exclude sequences from files object to avoid excessive gaps
+files <- files[-c(3, 39, 45:46, 51, 118, 120)]
+
+```
+
+Além de baixar as sequências, também iremos baixar metadados para cada uma das proteínas e iremos construir um dataframe a partir dos metadados. O objetivo principal dos metadados é fornecer novas *features* importantes que podem ser usadas para aprendizado supervisionado. Em especial, as informações sobre qual a lectina/organismo de origem o modelo estrutural do PDB representa e a presença/ausência de ligantes em quatro sítios de ligação já descritos na literatura para as lectinas da subtribo Diocleinae são variáveis importantes ao considerarmos as causas da variação estrututural que buscamos observar através de PCA.  
+
+```{r annotation_Diocleinae, echo=TRUE, message=FALSE, warning=FALSE}
+
+# Annotate results
+## Structures causing excess of gaps: 1APN, 1CES, 1DQ2, 1DQ4, 1ENS, 5Z5P, 5ZAC
+## c(3, 40, 46:47, 52, 121, 123)
+annotation <- pdb.annotate(pdbids[-c(3, 40, 46:47, 52, 121, 123)])
+# Add column with lectin names and another with lectin groups (for pch)
+annotation$lectin_names <- NA
+annotation$lectin_groups <- NA
+for (i in 1:length(annotation$source)) {
+  if (annotation$source[i] == "Bionia pedicellata") {
+    annotation$lectin_names[i] <- "CPL"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Canavalia boliviana") {
+    annotation$lectin_names[i] <- "Cbol"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia bonariensis") {
+    annotation$lectin_names[i] <- "CaBo"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia brasiliensis") {
+    annotation$lectin_names[i] <- "ConBr"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia cathartica") {
+    annotation$lectin_names[i] <- "ConV"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Canavalia ensiformis") {
+    annotation$lectin_names[i] <- "ConA"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia gladiata") {
+    annotation$lectin_names[i] <- "CGL"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia grandiflora") {
+    annotation$lectin_names[i] <- "ConGF"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia lineata") {
+    annotation$lectin_names[i] <- "CaLi"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Canavalia rosea") {
+    annotation$lectin_names[i] <- "ConM"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Cratylia argentea") {
+    annotation$lectin_names[i] <- "CFL"
+    annotation$lectin_groups[i] <- 0
+  }
+  if (annotation$source[i] == "Cratylia mollis") {
+    annotation$lectin_names[i] <- "Cramoll"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Cymbosema roseum") {
+    annotation$lectin_names[i] <- "CRLI"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Dioclea") {
+    annotation$lectin_names[i] <- "DLL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$source[i] == "Dioclea guianensis") {
+    annotation$lectin_names[i] <- "Dguia"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Dioclea lasiophylla") {
+    annotation$lectin_names[i] <- "DlyL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$source[i] == "Dioclea reflexa") {
+    annotation$lectin_names[i] <- "DrfL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$source[i] == "Dioclea rostrata") {
+    annotation$lectin_names[i] <- "DRL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$source[i] == "Dioclea virgata") {
+    annotation$lectin_names[i] <- "DvirL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$source[i] == "Macropsychanthus grandiflorus") {
+    annotation$lectin_names[i] <- "DGL"
+    annotation$lectin_groups[i] <- 1
+  }
+  if (annotation$source[i] == "Macropsychanthus violaceus") {
+    annotation$lectin_names[i] <- "DVL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$source[i] == "Macropsychanthus wilsonii") {
+    annotation$lectin_names[i] <- "DwL"
+    annotation$lectin_groups[i] <- 2
+  }
+    if (annotation$source[i] == "Macropsychanthus sclerocarpus") {
+    annotation$lectin_names[i] <- "DSL"
+    annotation$lectin_groups[i] <- 2
+  }
+  if (annotation$structureId[i] == "7LJG") {
+    annotation$lectin_names[i] <- "DAL"
+    annotation$lectin_groups[i] <- 1
+  }
+}
+
+annotation[, 4] <- as.numeric(annotation[, 4]) + rep(14,length(annotation[, 4]))
+annotation <- annotation[, c(1, 11, 18, 19, 10:9)]
+
+# We need to annotate each structure by occupation of the four binding sites
+#
+# Metal binding site: 1 - demetalized; 2 - native (Ca + Mn); 
+# 3 - (Mn at S1 without Ca at S2);
+# 4 - (Ca at S2 without Mn at S1);
+# 5 - (S1 and/or S2 substituted but without Ca and Mn).
+annotation$mbs <- 0
+for (i in 1:length(annotation$structureId)) {
+  if (grepl("CA", annotation$ligandId[i]) == FALSE && 
+      grepl("MN", annotation$ligandId[i]) == FALSE &&
+      grepl("CD", annotation$ligandId[i]) == FALSE &&
+      grepl("ZN", annotation$ligandId[i]) == FALSE &&
+      grepl("MG", annotation$ligandId[i]) == FALSE &&
+      grepl("NI", annotation$ligandId[i]) == FALSE &&
+      grepl("CO", annotation$ligandId[i]) == FALSE) {
+    annotation$mbs[i] <- 1
+  }
+  if (grepl("CA", annotation$ligandId[i]) == TRUE && 
+      grepl("MN", annotation$ligandId[i]) == TRUE &&
+      grepl("CD", annotation$ligandId[i]) == FALSE &&
+      grepl("ZN", annotation$ligandId[i]) == FALSE &&
+      grepl("MG", annotation$ligandId[i]) == FALSE &&
+      grepl("NI", annotation$ligandId[i]) == FALSE &&
+      grepl("CO", annotation$ligandId[i]) == FALSE) {
+    annotation$mbs[i] <- 2
+  }
+  if (grepl("MN", annotation$ligandId[i]) == TRUE && 
+      grepl("CA", annotation$ligandId[i]) == FALSE &&
+      grepl("CD", annotation$ligandId[i]) == FALSE &&
+      grepl("ZN", annotation$ligandId[i]) == FALSE &&
+      grepl("MG", annotation$ligandId[i]) == FALSE &&
+      grepl("NI", annotation$ligandId[i]) == FALSE &&
+      grepl("CO", annotation$ligandId[i]) == FALSE) {
+    annotation$mbs[i] <- 3
+  }
+  if (grepl("CA", annotation$ligandId[i]) == TRUE && 
+      grepl("MN", annotation$ligandId[i]) == FALSE &&
+      grepl("CD", annotation$ligandId[i]) == FALSE &&
+      grepl("ZN", annotation$ligandId[i]) == FALSE &&
+      grepl("MG", annotation$ligandId[i]) == FALSE &&
+      grepl("NI", annotation$ligandId[i]) == FALSE &&
+      grepl("CO", annotation$ligandId[i]) == FALSE) {
+    annotation$mbs[i] <- 4
+  }
+  else if (grepl("CA", annotation$ligandId[i]) == FALSE && 
+           grepl("MN", annotation$ligandId[i]) == FALSE ||
+           grepl("CD", annotation$ligandId[i]) == TRUE ||
+           grepl("ZN", annotation$ligandId[i]) == TRUE ||
+           grepl("MG", annotation$ligandId[i]) == TRUE ||
+           grepl("NI", annotation$ligandId[i]) == TRUE ||
+           grepl("CO", annotation$ligandId[i]) == TRUE) {
+    annotation$mbs[i] <- 5
+  }
+  if (is.na(annotation$ligandId[i])) {
+    annotation$mbs[i] <- 1
+  }
+}
+# Manual curation
+for (i in 1:length(annotation$structureId)) {
+  if (annotation$structureId[i] == "5BYN" ||
+      annotation$structureId[i] == "4K1Y" ||
+      annotation$structureId[i] == "4L8Q" ||
+      annotation$structureId[i] == "2JDZ" ||
+      annotation$structureId[i] == "2GDF" ||
+      annotation$structureId[i] == "1GKB" ||
+      annotation$structureId[i] == "4K1Z") {
+    annotation$mbs[i] <- 2
+  }
+}
+for (i in 1:length(annotation$structureId)) {
+  if (annotation$structureId[i] == "1CON" ||
+      annotation$structureId[i] == "1ENR" ||
+      annotation$structureId[i] == "1SCR" ||
+      annotation$structureId[i] == "1SCS" ||
+      annotation$structureId[i] == "2UU8" ||
+      annotation$structureId[i] == "3ENR" ||
+      annotation$structureId[i] == "6AHG" ||
+      annotation$structureId[i] == "6GW9") {
+    annotation$mbs[i] <- 4
+  }
+}
+
+# Carbohydrate binding site
+## Monosaccharides and its derivatives:
+### Mannose: MMA, XMM, PNA, MAN, R3M, 2KO, M3N
+### Glucose: MUG, GYP, PNG, R3G
+### Ribose: BDR
+## Biantenary derivative of mannose: EJT
+## Indole: IND
+## Adenine
+annotation$cbs <- 1
+for (i in 1:length(annotation$structureId)) {
+  if (grepl("MMA", annotation$ligandId[i]) == TRUE || 
+      grepl("XMM", annotation$ligandId[i]) == TRUE || 
+      grepl("PNA", annotation$ligandId[i]) == TRUE || 
+      grepl("MAN", annotation$ligandId[i]) == TRUE || 
+      grepl("R3M", annotation$ligandId[i]) == TRUE || 
+      grepl("2KO", annotation$ligandId[i]) == TRUE || 
+      grepl("M3N", annotation$ligandId[i]) == TRUE) {
+    annotation$cbs[i] <- 2
+  }
+  if (grepl("MUG", annotation$ligandId[i]) == TRUE || 
+      grepl("GYP", annotation$ligandId[i]) == TRUE || 
+      grepl("PNG", annotation$ligandId[i]) == TRUE || 
+      grepl("R3G", annotation$ligandId[i]) == TRUE) {
+    annotation$cbs[i] <- 3
+  }
+  if (grepl("BDR", annotation$ligandId[i]) == TRUE) {
+    annotation$cbs[i] <- 4
+  }
+  if (grepl("EJT", annotation$ligandId[i]) == TRUE) {
+    annotation$cbs[i] <- 2
+  }
+  if (grepl("IND", annotation$ligandId[i]) == TRUE) {
+    annotation$cbs[i] <- 4
+  }
+  if (grepl("ADE", annotation$ligandId[i]) == TRUE) {
+    annotation$cbs[i] <- 4
+  }
+}
+# Manual curation
+for (i in 1:length(annotation$structureId)) {
+  if (annotation$structureId[i] == "4Z8B") {
+    annotation$cbs[i] <- 1
+  }
+}
+for (i in 1:length(annotation$structureId)) {
+  if (annotation$structureId[i] == "2OVU" ||
+      annotation$structureId[i] == "2OW4" ||
+      annotation$structureId[i] == "4K1Y" ||
+      annotation$structureId[i] == "1DGL" ||
+      annotation$structureId[i] == "1BXH" ||
+      annotation$structureId[i] == "1CVN" ||
+      annotation$structureId[i] == "1I3H" ||
+      annotation$structureId[i] == "1ONA" ||
+      annotation$structureId[i] == "1QDC" ||
+      annotation$structureId[i] == "1QDO" ||
+      annotation$structureId[i] == "1TEI" ||
+      annotation$structureId[i] == "2EF6" ||
+      annotation$structureId[i] == "2P2K" ||
+      annotation$structureId[i] == "2P34" ||
+      annotation$structureId[i] == "2P37" ||
+      annotation$structureId[i] == "3D4K" ||
+      annotation$structureId[i] == "4CZS" ||
+      annotation$structureId[i] == "4K1Z" ||
+      annotation$structureId[i] == "5WEY") {
+    annotation$cbs[i] <- 2
+  }
+}
+for (i in 1:length(annotation$structureId)) {
+  if (annotation$structureId[i] == "2CY6" ||
+      annotation$structureId[i] == "2CYF") {
+    annotation$cbs[i] <- 3
+  }
+}
+
+# Auxin binding site 
+# (Auxins: IAC) 
+# 4WM
+# (Resveratrol: STL is close to auxin site)
+annotation$auxin <- 1
+for (i in 1:length(annotation$structureId)) {
+  if (grepl("IAC", annotation$ligandId[i]) == TRUE ||
+      grepl("4WM", annotation$ligandId[i]) == TRUE) {
+    annotation$auxin[i] <- 2
+  }
+  if (grepl("STL", annotation$ligandId[i]) == TRUE) {
+    annotation$auxin[i] <- 3
+  }
+}
+
+# Abu binding site
+# (Abu = DBB; GABA = ABU) 
+# D-VINYLGLYCINE (A3B) is on the Abu site
+annotation$abu <- 1
+for (i in 1:length(annotation$structureId)) {
+  if (grepl("DBB", annotation$ligandId[i]) == TRUE ||
+      grepl("ABU", annotation$ligandId[i]) == TRUE ||
+      grepl("A3B", annotation$ligandId[i]) == TRUE) {
+    annotation$abu[i] <- 2
+  }
+}
+
+```
+
+Agora iremos realizar o alinhamento de sequências e sobreposição estrutural para o monômero separado de cada lectina, salvando as estruturas com as novas coordenadas no final.  
+
+```{r structural_alignment, echo=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE}
+
+# Structure/sequence alignment
+pdbs <- pdbaln(files, fit=TRUE, exefile = fp.muscle)
+## Structures causing excess of gaps: 1CES, 1DQ2, 1DQ4, 1ENS, 5Z5P, 5ZAC
+## c(3: 39, 45:46, 51, 118, 120)
+# Core identification
+core <- core.find(pdbs)
+# Plot core
+col=rep("black", length(core$volume))
+col[core$volume<2]="pink"; col[core$volume<1]="red"
+plot(core, col=col,                                  # Plot without axis text
+     xaxt = "n",
+     yaxt = "n",
+     xlab = "",
+     ylab = "")
+title(xlab = "Core size (number of residues)", line = 2) 
+title(ylab = expression(paste("Total ellipsoid volume (", 
+                                 "\305") ^ 3*")"), line = 2)
+# Visualize core
+core.inds <- print(core, vol=1.0)
+# Write the core and the superimposed structures
+write.pdb(xyz=pdbs$xyz[1,core.inds$xyz], file="quick_core.pdb")
+xyz <- pdbfit(pdbs, core.inds, outpath = "core_ensemble")
+
+```
+
+O alinhamento mostra 220 sítios equivalentes e sem lacunas, ou seja, temos 220 átomos de C$\alpha$ equivalentes, onde iremos realizar a PCA e visualizar uma projeção preliminar dos três primeiros componentes principais.  
+
+```{r pca, echo=TRUE, message=FALSE, warning=FALSE}
+
+# PCA
+pc_lectins <- pca(pdbs)
+# Rename rows with PDB ids without file path
+row.names(pc_lectins$z) <- annotation$structureId
+# Plot results
+plot(pc_lectins)
+# Eigenvalues
+L <- pc_lectins$L
+# Proportion of variance
+pvar_percent <- (L/sum(L)) * 100
+# Orthogonal eigenvectors
+PCs <- pc_lectins$z
+pclabels <- 1:length(PCs[1, ])
+for (i in 1:length(PCs[1, ])) {
+  pclabels[i] <- paste("PC", i, sep = "")
+}
+dataset <- as.data.frame(PCs[, 1:20])
+colnames(dataset) <- pclabels[1:20]
+# Adding annotation features
+dataset <- cbind.data.frame(dataset, annotation[, c(3:4, 7:10)])
+# Save the dataset as CSV
+write.csv(dataset, file = "dataset.csv", sep = ",", row.names = TRUE,
+          col.names = TRUE)
+# Visualize the dataframe
+dataset
+
+```
+
+Os plots de *PC loadings* abaixo nos permitem visualizar a contribuição de cada resíduo de aminoácido para um dado componente principal.  
+
+```{r reference_pdb_Diocleinae, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+
+# Ignore gap containing positions
+gaps.res <- gap.inspect(pdbs$ali)
+gaps.pos <- gap.inspect(pdbs$xyz)
+
+# Tailor the PDB structure to exclude gap positions for SSE annotation
+pdb <- read.pdb("5CNA")
+id <- grep("5CNA_A", pdbs$id)
+inds <- atom.select(pdb, resno = pdbs$resno[id, gaps.res$f.inds])
+ref.pdb <- trim.pdb(pdb, inds = inds)
+sele <- atom.select(ref.pdb, "protein", chain="A")
+ref.pdb <- trim.pdb(ref.pdb, sele)
+
+```
+
+```{r PC123_loadings_Diocleinae, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+par(mfrow = c(3, 1), cex = 0.75, mar = c(3, 4, 1, 1))
+plot.bio3d(pc_lectins$au[,1], resno=ref.pdb, sse=ref.pdb, ylab="PC1")
+plot.bio3d(pc_lectins$au[,2], resno=ref.pdb, sse=ref.pdb, ylab="PC2")
+plot.bio3d(pc_lectins$au[,3], resno=ref.pdb, sse=ref.pdb, ylab="PC3")
+
+```
+
+# Parte II: análise estatística e exploratória dos dados
+
+Iremos visualizar as projeções dos componentes principais observando determinadas *features* reais do nosso conjunto de dados, como o nome da lectina de acordo com a literatura, e o status dos seguintes sítios de ligação já documentados para essas proteínas:  
+
+1. sítio de ligação de metais;  
+2. sítio de ligação de carboidratos;  
+3. sítio de ligação de auxinas;  
+4. sítio de ligação do aminoácido não proteico, ácido alfa-aminobutírico (Abu).  
+
+```{r ConBr_monomer, message=FALSE, warning=FALSE}
+
+NGLVieweR(data = "Diocleinae_3D_structures/split_chain/6VB8_A.pdb") %>%
+  addRepresentation("cartoon") %>% 
+  addRepresentation("spacefill", param = list(sele="302-303", colorScheme="element")) %>% 
+  addRepresentation("ball+stick", param = list(sele="306-307", colorScheme="element")) %>%
+  addRepresentation("surface",
+    param = list(
+      colorValue = "white",
+      opacity = 0.5
+    )
+  )
+```
+
+```{r packages_Diocleinae, message=FALSE, warning=FALSE, include=FALSE}
+
+library(bio3d)
+library(viridis)
+library(ggthemes)
+library(scales)
+library(msaR)
+library(ggmsa)
+library(dplyr)
+
+```
+
+```{r pca_Diocleinae01, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to species
+colors <- colorblind_pal()
+plot.pca(pc_lectins, pc.axes = NULL,
+     pch = (annotation[, 4]),
+     col = factor(annotation[, 3]))
+legend(x = .69, y = .445,
+       legend = levels(factor(annotation[, 3])),
+       pch = c(rep(0, 8), rep(1, 8), rep(2, 7)),
+       col = factor(levels(factor(annotation[, 3]))), 
+       y.intersp = .7, ncol = 2)
+
+```
+
+Examinando a projeção dos diferentes tipos de lectinas ao longo do subespaço PC1-PC2 abaixo, fizemos algumas observações. PC2, mas não PC1, é capaz de distinguir os diferentes tipos de lectinas. Por exemplo, o grupo contendo CPL, CFL, e Cramoll é encontrado apenas em valores positivos do PC2. Lectinas dos gêneros *Cymbosema* e *Dioclea* estão também presentes na faixa de valores positivos do PC2. Por outro lado, as lectinas do gênero *Canavalia* apresentam um padrão de divergência consistente com a filogenia. As duas proteínas que representam espécies dos ramos que divergiram primeiro na filogenia, CaBo e ConGF, são encontradas em valores positivos do PC2, enquanto que o grupo composto por todas as outras lectinas de *Canavalia*, com exceção de uma poucas estruturas de ConA e ConV, é encontrado em valores negativos do PC2. As observações acima sugerem que um grupo das lectinas de *Canavalia* sofreu divergência conformacional durante a evolução, e parte dessa divergência é capturada pelo PC2.  
+
+```{r pca_Diocleinae01_PC1PC2, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to species
+plot.pca(pc_lectins, pc.axes = c(1, 2),
+     pch = (annotation[, 4]),
+     col = factor(annotation[, 3]))
+legend("topleft",
+       legend = levels(factor(annotation[, 3])),
+       pch = c(rep(0, 8), rep(1, 8), rep(2, 7)),
+       col = factor(levels(factor(annotation[, 3]))), 
+       y.intersp = .7, ncol = 3)
+
+```
+
+```{r matrix_pca_Diocleinae01, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Customize upper panel
+upper.panel <- function(x, y) {
+  points(x, y, 
+         pch = (annotation[, 4]),
+         col = factor(annotation[, 3]))
+  abline(h = 0, col = "gray", lty = 2)
+  abline(v = 0, col = "gray", lty = 2)
+}
+
+# Plot PCA projection matrix
+pairs(pc_lectins$z[, 1:6],
+      lower.panel = NULL, 
+      upper.panel = upper.panel,
+      diag.panel = NULL)
+
+```
+
+Agora iremos visualizar os componentes principais de acordo com o status do sítio de ligação a metais.  
+
+```{r pca_Diocleinae02, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to occupation status of the metal binding site
+plot.pca(pc_lectins, pc.axes = NULL,
+     pch = 19,
+     col = factor(annotation[, 7]))
+legend(x = .3, y = .55,
+       legend = c("Demetallized", "Native", "Only Mn", "Only CA",
+                  "Other metals"),
+       pch = 19, bty = "n",
+       col = factor(levels(factor(annotation[, 7]))), 
+       y.intersp = .8, ncol = 2)
+
+```
+
+```{r pmatrix_pca_Diocleinae02, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Customize upper panel
+upper.panel <- function(x, y) {
+  points(x, y, 
+         pch = 19,
+         col = factor(annotation[, 7]))
+  abline(h = 0, col = "gray", lty = 2)
+  abline(v = 0, col = "gray", lty = 2)
+}
+
+# Plot PCA projection matrix
+pairs(pc_lectins$z[, 1:6],
+      lower.panel = NULL, 
+      upper.panel = upper.panel,
+      diag.panel = NULL)
+
+```
+
+A visualização seguinte mostra os componentes principais com as proteínas anotadas de acordo com o status do sítio de reconhecimento de carboidratos.  
+
+```{r pca_Diocleinae03, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to the occupation status of the carbohydrate binding site
+plot.pca(pc_lectins, pc.axes = NULL,
+     pch = 19,
+     col = factor(annotation[, 8]))
+legend(x = .2, y = .55,
+       legend = c("without ligand", "mannose and derivatives",
+                  "glucose and derivatives", "ribose, indole, adenine"),
+       pch = 19, bty = "n",
+       col = factor(levels(factor(annotation[, 8]))), 
+       y.intersp = .8, ncol = 2)
+
+```
+
+```{r pca_Diocleinae03_2, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to the occupation status of the carbohydrate binding site
+plot.pca(pc_lectins, pc.axes = c(1, 3),
+     pch = 19,
+     col = factor(annotation[, 8]))
+legend("topright",
+       legend = c("without ligand", "mannose and derivatives",
+                  "glucose and derivatives", "ribose, indole, adenine"),
+       pch = 19, bty = "o",
+       col = factor(levels(factor(annotation[, 8]))), 
+       y.intersp = .8, ncol = 1)
+
+```
+
+```{r matrix_pca_Diocleinae03, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Customize upper panel
+upper.panel <- function(x, y) {
+  points(x, y, 
+         pch = 19,
+         col = factor(annotation[, 8]))
+  abline(h = 0, col = "gray", lty = 2)
+  abline(v = 0, col = "gray", lty = 2)
+}
+
+# Plot PCA projection matrix
+pairs(pc_lectins$z[, 1:6],
+      lower.panel = NULL, 
+      upper.panel = upper.panel,
+      diag.panel = NULL)
+
+```
+
+Agora podemos observar os componentes principais de acordo com o status do sítio de ligação de auxinas.  
+
+```{r pca_Diocleinae04, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to the occupation status of the auxin binding site
+plot.pca(pc_lectins, pc.axes = NULL,
+     pch = 19,
+     col = factor(annotation[, 9]))
+legend(x = .4, y = .55,
+       legend = c("without ligand", "ligand on auxin site", "Resveratrol"),
+       pch = 19, bty = "n",
+       col = factor(levels(factor(annotation[, 9]))), 
+       y.intersp = .8, ncol = 1)
+
+```
+ 
+```{r matrix_pca_Diocleinae04, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Customize upper panel
+upper.panel <- function(x, y) {
+  points(x, y, 
+         pch = 19,
+         col = factor(annotation[, 9]))
+  abline(h = 0, col = "gray", lty = 2)
+  abline(v = 0, col = "gray", lty = 2)
+}
+
+# Plot PCA projection matrix
+pairs(pc_lectins$z[, 1:6],
+      lower.panel = NULL, 
+      upper.panel = upper.panel,
+      diag.panel = NULL)
+
+```
+
+Por fim, iremos visualizar os componentes principais de acordo com o sítio de ligação do aminoácido não proteico Abu.  
+
+```{r pca_Diocleinae05, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Plot according to the occupation status of the Abu binding site
+plot.pca(pc_lectins, pc.axes = NULL,
+     pch = 19,
+     col = factor(annotation[, 10]))
+legend(x = .4, y = .55,
+       legend = c("without ligand", "with ligand"),
+       pch = 19, bty = "n",
+       col = factor(levels(factor(annotation[, 10]))), 
+       y.intersp = .8, ncol = 1)
+
+```
+ 
+```{r matrix_pca_Diocleinae05, echo=TRUE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8}
+
+# Customize upper panel
+upper.panel <- function(x, y) {
+  points(x, y, 
+         pch = 19,
+         col = factor(annotation[, 10]))
+  abline(h = 0, col = "gray", lty = 2)
+  abline(v = 0, col = "gray", lty = 2)
+}
+
+# Plot PCA projection matrix
+pairs(pc_lectins$z[, 1:6],
+      lower.panel = NULL, 
+      upper.panel = upper.panel,
+      diag.panel = NULL)
+
+```
+
+# Parte III: algoritmos de machine learning
+
+Iremos usar duas metodologias de machine learning não supervisionado: k-means clustering e hierarchical clustering. Iremos utilizar as funções da biblioteca **tidymodels**, pois ela fornece um framework para machine learning no R usando os princípios do **tidyverse**, ou seja, a mesma filosofia, design e estrutura de dados arquitetados para ciência de dados no R.  
+
+```{r ml_packages, message=FALSE, warning=FALSE}
+
+library(tidymodels)
+
+```
+
+
+## k-means clustering
+
+Primeiro iremos utilizar o plot do PC1-PC2 para agrupar as lectinas levando em conta que o PC2, como observamos anteriormente, parece estar relacionado com a variação filogenética dos diferentes tipos de lectinas.  
+
+```{r kclust1}
+
+points <- 
+  dataset[, 1:2]
+
+kclust <- kmeans(points, centers = 2)
+kclust
+
+summary(kclust)
+
+```
+
+```{r kclust1_augment}
+
+augment(kclust, points)
+
+```
+
+```{r kclust1_tidy}
+
+tidy(kclust, points)
+
+```
+
+```{r kclust1_glance}
+
+glance(kclust, points)
+
+```
+
+```{r kclust1_k1to9}
+
+kclusts <- 
+  tibble(k = 1:9) %>%
+  mutate(
+    kclust = map(k, ~kmeans(points, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, points)
+  )
+
+kclusts
+
+```
+
+```{r kclusts_dataset}
+
+clusters <- 
+  kclusts %>%
+  unnest(cols = c(tidied))
+
+assignments <- 
+  kclusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings <- 
+  kclusts %>%
+  unnest(cols = c(glanced))
+
+```
+
+```{r kclusts_assignments}
+
+p1 <- 
+  ggplot(assignments, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  facet_wrap(~ k)
+p2 <- p1 + geom_point(data = clusters, size = 10, shape = "x")
+p2
+
+```
+
+```{r kclusts_clusterings}
+
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point()
+
+```
+
+Como podemos observar acima, três clusters parecem ser suficientes para separar as lectinas de acordo com o nosso conhecimento da filogenia, onde o cluster 2 agrupa quase todas as lectinas dos gêneros *Cratylia*, *Cymbosema* e *Dioclea*, enquanto que os clusters 1 e 3 agrupam lectinas do gênero *Canavalia* principalmente. Também podemos observar pelo plot `tot.withinss` em função de k que a variância total dentro dos clusters diminui pouco após cinco clusters.  
+
+
+Agora iremos agrupar as proteínas na projeção PC1-PC3, pois, como notamos anteriormente, enquanto PC2 parece estar relacionada com a variação filogenética, PC1 e PC3 parecem estar relacionados com a variação conformacional das proteína devido ao estado de ligação combinado dos diferentes sítios de ligação, mas mais nitidamente do sítio de ligação de carboidratos.  
+
+```{r kclust2_k1to9}
+
+points <- 
+  dataset[, c(1, 3)]
+
+kclusts <- 
+  tibble(k = 1:9) %>%
+  mutate(
+    kclust = map(k, ~kmeans(points, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, points)
+  )
+
+kclusts
+
+```
+
+```{r kclusts2_dataset}
+
+clusters <- 
+  kclusts %>%
+  unnest(cols = c(tidied))
+
+assignments <- 
+  kclusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings <- 
+  kclusts %>%
+  unnest(cols = c(glanced))
+
+```
+
+```{r kclusts2_assignments}
+
+p1 <- 
+  ggplot(assignments, aes(x = PC1, y = PC3)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  facet_wrap(~ k)
+p2 <- p1 + geom_point(data = clusters, size = 10, shape = "x")
+p2
+
+```
+
+```{r kclusts2_clusterings}
+
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point()
+
+```
+
+## Hierarchical clustering
+
+Iremos utilizar um método de clusterização do tipo *aglomerativo* (abordagem bottom up). Iremos calcular as distâncias pelo método euclidiano e compararemos diferentes métodos aglomerativos (`"complete"`, `"average"` e `"ward.D"`).  
+
+```{r hclust1, message=FALSE, warning=FALSE}
+
+# For reproducibility
+set.seed(2056)
+
+# Distance between observations matrix
+d <- dist(dataset[, 1:2], method = "euclidean")
+
+# Hierarchical clustering using Complete Linkage
+pc1pc2_hclust_complete <- hclust(d, method = "complete")
+
+# Hierarchical clustering using Average Linkage
+pc1pc2_hclust_average <- hclust(d, method = "average")
+
+# Hierarchical clustering using Ward Linkage
+pc1pc2_hclust_ward <- hclust(d, method = "ward.D2")
+
+```
+
+```{r hclust1_complete, message=FALSE, warning=FALSE}
+
+library(factoextra)
+
+# Visualize cluster separations
+fviz_dend(pc1pc2_hclust_complete, main = "Complete Linkage")
+
+```
+
+```{r hclust1_average, message=FALSE, warning=FALSE}
+
+# Visualize cluster separations
+fviz_dend(pc1pc2_hclust_average, main = "Average Linkage")
+
+```
+
+```{r hclust1_ward, message=FALSE, warning=FALSE}
+
+# Visualize cluster separations
+fviz_dend(pc1pc2_hclust_ward, main = "Ward Linkage")
+
+```
+
+Agora iremos avaliar o coeficiente aglomerativo (AC), que mensura a estrutura de agrupamentos do dataset, onde valores próximos a 1 indicam agrupamentos mais balanceados e valores próximos a 0 indicam agrupamentos menos balanceados.  
+
+```{r hclust1_ac, message=FALSE, warning=FALSE}
+
+library(cluster)
+#Compute ac values
+ac_metric <- list(
+  complete_ac = agnes(dataset[, 1:2], metric = "euclidean", method = "complete")$ac,
+  average_ac = agnes(dataset[, 1:2], metric = "euclidean", method = "average")$ac,
+  ward_ac = agnes(dataset[, 1:2], metric = "euclidean", method = "ward")$ac
+)
+
+ac_metric
+
+```
+
+Iremos utilizar o dendograma obtido pelo método aglomerativo `ward.D`. Agora podemos determinar o número de clusters que iremos extrair usando o método *WCSS*.  
+
+```{r hclust1_hcss, message=FALSE, warning=FALSE}
+
+# Determine and visuzalize optimal n.o of clusters
+#  hcut (for hierarchical clustering)
+fviz_nbclust(dataset[, 1:2], FUNcluster = hcut, method = "wss")
+
+```
+
+Assim como com o k-means, parece que aqui também podemos utilizar 3 clusters. Então iremos agora colorir o dendograma usando k = 3.  
+
+```{r hclust1_k3, message=FALSE, warning=FALSE}
+
+# Visualize clustering structure for 3 groups
+fviz_dend(pc1pc2_hclust_ward, k = 3, main = "Ward Linkage")
+
+```
+
+Agora precisamos de fato cortar nosso dataset de acordo com o nosso modelo, extraindo o rótulos dos clusters para visualizarmos a projeção dos componentes principais agrupados.  
+
+```{r hclust1_labels, message=FALSE, warning=FALSE}
+
+pc1pc2 <- dataset[, 1:2]
+
+# Hierarchical clustering using Ward Linkage
+pc1pc2_hclust_ward <- hclust(d, method = "ward.D2")
+
+# Group data into 3 clusters
+results_hclust <- tibble(
+  cluster_id = cutree(pc1pc2_hclust_ward, k = 3)) %>% 
+  mutate(cluster_id = factor(cluster_id)) %>% 
+  bind_cols(pc1pc2)
+
+results_hclust
+
+```
+
+Finalmente, podemos visualizar o resultado da clusterização para o subespaço PC1-PC2.  
+
+```{r hclust1_plot}
+
+# Plot h-cluster assignmnet on the PC data
+hclust_spc_plot <- results_hclust %>% 
+  ggplot(mapping = aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = cluster_id), size = 2, alpha = 0.8) +
+  scale_color_manual(values = c("darkorange","purple","cyan4"))
+
+hclust_spc_plot
+
+```
+
+Iremos fazer o mesmo para o subespaço PC1-PC3.  
+
+```{r hclust2, message=FALSE, warning=FALSE}
+
+# For reproducibility
+set.seed(2056)
+
+# Distance between observations matrix
+d <- dist(dataset[, c(1, 3)], method = "euclidean")
+
+# Hierarchical clustering using Complete Linkage
+pc1pc3_hclust_complete <- hclust(d, method = "complete")
+
+# Hierarchical clustering using Average Linkage
+pc1pc3_hclust_average <- hclust(d, method = "average")
+
+# Hierarchical clustering using Ward Linkage
+pc1pc3_hclust_ward <- hclust(d, method = "ward.D2")
+
+```
+
+```{r hclust2_complete, message=FALSE, warning=FALSE}
+
+# Visualize cluster separations
+fviz_dend(pc1pc3_hclust_complete, main = "Complete Linkage")
+
+```
+
+```{r hclust2_average, message=FALSE, warning=FALSE}
+
+# Visualize cluster separations
+fviz_dend(pc1pc3_hclust_average, main = "Average Linkage")
+
+```
+
+```{r hclust2_ward, message=FALSE, warning=FALSE}
+
+# Visualize cluster separations
+fviz_dend(pc1pc3_hclust_ward, main = "Ward Linkage")
+
+```
+
+```{r hclust2_ac, message=FALSE, warning=FALSE}
+
+#Compute ac values
+ac_metric <- list(
+  complete_ac = agnes(dataset[, c(1, 3)], metric = "euclidean", method = "complete")$ac,
+  average_ac = agnes(dataset[, c(1, 3)], metric = "euclidean", method = "average")$ac,
+  ward_ac = agnes(dataset[, c(1, 3)], metric = "euclidean", method = "ward")$ac
+)
+
+ac_metric
+
+```
+
+Iremos utilizar o dendograma obtido pelo método aglomerativo `ward.D`novamente.  
+
+```{r hclust2_hcss, message=FALSE, warning=FALSE}
+
+# Determine and visuzalize optimal n.o of clusters
+#  hcut (for hierarchical clustering)
+fviz_nbclust(dataset[, c(1, 3)], FUNcluster = hcut, method = "wss")
+
+```
+
+Assim como com o k-means, parece que aqui também podemos utilizar 3 clusters. Então iremos agora colorir o dendograma usando k = 3.  
+
+```{r hclust2_k3, message=FALSE, warning=FALSE}
+
+# Visualize clustering structure for 3 groups
+fviz_dend(pc1pc3_hclust_ward, k = 3, main = "Ward Linkage")
+
+```
+
+```{r hclust2_labels, message=FALSE, warning=FALSE}
+
+pc1pc3 <- dataset[, c(1, 3)]
+
+# Hierarchical clustering using Ward Linkage
+pc1pc3_hclust_ward <- hclust(d, method = "ward.D2")
+
+# Group data into 3 clusters
+results_hclust <- tibble(
+  cluster_id = cutree(pc1pc3_hclust_ward, k = 3)) %>% 
+  mutate(cluster_id = factor(cluster_id)) %>% 
+  bind_cols(pc1pc3)
+
+results_hclust
+
+```
+
+Finalmente, podemos visualizar o resultado da clusterização para o subespaço PC1-PC3.  
+
+```{r hclust2_plot}
+
+# Plot h-cluster assignmnet on the PC data
+hclust_spc_plot <- results_hclust %>% 
+  ggplot(mapping = aes(x = PC1, y = PC3)) +
+  geom_point(aes(color = cluster_id), size = 2, alpha = 0.8) +
+  scale_color_manual(values = c("darkorange","purple","cyan4"))
+
+hclust_spc_plot
+
+```
+
+# Referências
